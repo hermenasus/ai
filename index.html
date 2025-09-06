@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nano Banana 多圖合成生成器</title>
+    <!-- 引入 Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Google Fonts - Inter 字體 -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 p-4 min-h-screen flex items-center justify-center">
+
+    <div class="container mx-auto p-6 bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-3xl w-full">
+        <!-- 標題 -->
+        <h1 class="text-4xl font-extrabold text-center text-indigo-600 dark:text-indigo-400 mb-6 tracking-tight">
+            多圖合成生成器
+        </h1>
+        <p class="text-center text-gray-500 dark:text-gray-400 mb-8">
+            上傳多張參考圖片，並輸入文字描述，讓我們來合成新圖像！
+        </p>
+
+        <!-- 應用程式介面 -->
+        <div class="flex flex-col space-y-4">
+            <!-- 圖片上傳區 -->
+            <label for="imageUpload" class="block text-sm font-medium text-gray-700 dark:text-gray-300">上傳參考圖片（最多 5 張）</label>
+            <input type="file" id="imageUpload" multiple accept="image/*"
+                class="block w-full text-sm text-gray-500 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
+            
+            <!-- 圖片預覽區 -->
+            <div id="imagePreview" class="flex flex-wrap gap-4 mt-4"></div>
+
+            <!-- 描述輸入框 -->
+            <label for="promptInput" class="block text-sm font-medium text-gray-700 dark:text-gray-300">文字描述</label>
+            <textarea id="promptInput" rows="3" placeholder="請輸入您想生成的圖像描述，例如：一隻黃金獵犬，在海灘上玩耍..."
+                class="w-full p-3 text-sm bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors placeholder-gray-400 dark:placeholder-gray-500"></textarea>
+
+            <!-- 生成按鈕 -->
+            <button id="generateBtn"
+                class="w-full px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-md transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50">
+                合成圖片
+            </button>
+        </div>
+
+        <!-- 圖像顯示區域 -->
+        <div class="mt-8 relative min-h-[300px] flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden">
+            <!-- 載入中指示器 -->
+            <div id="loadingIndicator" class="hidden flex-col items-center justify-center text-indigo-600 dark:text-indigo-400">
+                <div class="w-12 h-12 border-4 border-indigo-400 border-dashed rounded-full animate-spin mb-2"></div>
+                <p>合成中，請稍候...</p>
+            </div>
+
+            <!-- 圖像顯示區塊 -->
+            <div id="imageContainer" class="w-full h-full flex items-center justify-center text-gray-400 p-4">
+                <!-- 初始訊息 -->
+                <p id="initialMessage" class="text-center">生成的圖像將會顯示在這裡。</p>
+            </div>
+        </div>
+
+        <!-- 腳註 -->
+        <p class="mt-6 text-center text-xs text-gray-400 dark:text-gray-500">
+            Powered by Gemini AI Model
+        </p>
+    </div>
+
+    <script>
+        // DOM 載入完成後執行
+        document.addEventListener('DOMContentLoaded', () => {
+            // 獲取所有需要的 DOM 元素
+            const imageUpload = document.getElementById('imageUpload');
+            const imagePreview = document.getElementById('imagePreview');
+            const promptInput = document.getElementById('promptInput');
+            const generateBtn = document.getElementById('generateBtn');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const imageContainer = document.getElementById('imageContainer');
+            const initialMessage = document.getElementById('initialMessage');
+
+            // 存儲圖片的 Base64 數據
+            let uploadedImages = [];
+            // 存儲上次生成的圖片數據，用於連續修改
+            let lastGeneratedImage = null;
+
+            // 處理錯誤訊息並顯示給使用者
+            const displayMessage = (message, isError = false) => {
+                imageContainer.innerHTML = `<p class="text-center p-4 ${isError ? 'text-red-500' : 'text-gray-400'}">${message}</p>`;
+            };
+
+            // 處理圖片上傳
+            imageUpload.addEventListener('change', (e) => {
+                uploadedImages = [];
+                imagePreview.innerHTML = ''; // 清空預覽
+                lastGeneratedImage = null; // 上傳新圖片時，清除上次生成的圖片
+                const files = e.target.files;
+                
+                if (files.length > 5) {
+                    displayMessage('最多只能上傳 5 張圖片。', true);
+                    return;
+                }
+
+                Array.from(files).forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        // 建立預覽圖像
+                        const img = document.createElement('img');
+                        img.src = event.target.result;
+                        img.className = 'w-24 h-24 object-cover rounded-lg shadow-md';
+                        imagePreview.appendChild(img);
+
+                        // 儲存 Base64 數據和 MIME 類型
+                        const base64Data = event.target.result.split(',')[1];
+                        const mimeType = file.type;
+                        uploadedImages.push({ base64: base64Data, mimeType: mimeType });
+                    };
+                    reader.readAsDataURL(file);
+                });
+            });
+
+            // 處理 API 請求並生成圖像
+            const generateImage = async (prompt, images) => {
+                // 顯示載入中指示器
+                loadingIndicator.classList.remove('hidden');
+                imageContainer.innerHTML = '';
+                initialMessage.classList.add('hidden');
+
+                // 請在這裡貼上您的 API 金鑰
+                const apiKey = "AIzaSyAVRkdCHjYQCG-0_D2v-yVLWBm7dm6cFY4"; 
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${apiKey}`;
+                
+                // 建立 API 請求的內容部分
+                const contentParts = [{ text: prompt }];
+                images.forEach(img => {
+                    contentParts.push({
+                        inlineData: {
+                            mimeType: img.mimeType,
+                            data: img.base64
+                        }
+                    });
+                });
+
+                const payload = {
+                    contents: [{ parts: contentParts }],
+                    generationConfig: {
+                        responseModalities: ["IMAGE"]
+                    },
+                };
+                
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error?.message || '圖像生成失敗');
+                    }
+
+                    const result = await response.json();
+                    
+                    const imageData = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+                    
+                    if (imageData) {
+                        const imageUrl = `data:image/png;base64,${imageData}`;
+                        const img = document.createElement('img');
+                        img.src = imageUrl;
+                        img.alt = prompt;
+                        img.className = 'w-full h-auto rounded-lg shadow-lg object-contain';
+                        
+                        imageContainer.innerHTML = '';
+                        imageContainer.appendChild(img);
+                        
+                        // 成功生成後，將新圖像儲存為下次的參考
+                        lastGeneratedImage = {
+                            base64: imageData,
+                            mimeType: 'image/png' // Gemini 輸出的格式
+                        };
+                    } else {
+                        displayMessage('未收到有效的圖像數據。', true);
+                    }
+
+                } catch (error) {
+                    console.error('API 請求出錯:', error);
+                    displayMessage(`錯誤：${error.message}`, true);
+                } finally {
+                    // 隱藏載入中指示器
+                    loadingIndicator.classList.add('hidden');
+                }
+            };
+
+            // 處理按鈕點擊事件
+            generateBtn.addEventListener('click', () => {
+                const prompt = promptInput.value.trim();
+                let imagesToUse = [];
+                
+                if (uploadedImages.length > 0) {
+                    // 如果用戶上傳了新圖片，則使用這些圖片
+                    imagesToUse = uploadedImages;
+                } else if (lastGeneratedImage) {
+                    // 如果沒有新圖片，但有上次生成的圖片，則使用它
+                    imagesToUse = [lastGeneratedImage]; 
+                } else {
+                    // 兩者皆無
+                    displayMessage('請上傳圖片或先生成一張圖片。', true);
+                    return;
+                }
+
+                if (prompt) {
+                    generateImage(prompt, imagesToUse);
+                } else {
+                    displayMessage('請輸入有效的描述！', true);
+                }
+            });
+        });
+    </script>
+</body>
+</html>
+
