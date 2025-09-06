@@ -48,7 +48,7 @@
         </div>
 
         <!-- 圖像顯示區域 -->
-        <div class="mt-8 relative min-h-[300px] flex items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden">
+        <div class="mt-8 relative min-h-[300px] flex flex-col items-center justify-center bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden">
             <!-- 載入中指示器 -->
             <div id="loadingIndicator" class="hidden flex-col items-center justify-center text-indigo-600 dark:text-indigo-400">
                 <div class="w-12 h-12 border-4 border-indigo-400 border-dashed rounded-full animate-spin mb-2"></div>
@@ -60,6 +60,11 @@
                 <!-- 初始訊息 -->
                 <p id="initialMessage" class="text-center">生成的圖像將會顯示在這裡。</p>
             </div>
+
+            <!-- 下載按鈕 (預設隱藏) -->
+            <button id="downloadBtn" class="hidden mt-4 px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg shadow-md transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-4 focus:ring-green-500 focus:ring-opacity-50">
+                下載圖片
+            </button>
         </div>
 
         <!-- 腳註 -->
@@ -79,6 +84,7 @@
             const loadingIndicator = document.getElementById('loadingIndicator');
             const imageContainer = document.getElementById('imageContainer');
             const initialMessage = document.getElementById('initialMessage');
+            const downloadBtn = document.getElementById('downloadBtn');
 
             // 存儲圖片的 Base64 數據
             let uploadedImages = [];
@@ -88,6 +94,7 @@
             // 處理錯誤訊息並顯示給使用者
             const displayMessage = (message, isError = false) => {
                 imageContainer.innerHTML = `<p class="text-center p-4 ${isError ? 'text-red-500' : 'text-gray-400'}">${message}</p>`;
+                downloadBtn.classList.add('hidden');
             };
 
             // 處理圖片上傳
@@ -95,6 +102,7 @@
                 uploadedImages = [];
                 imagePreview.innerHTML = ''; // 清空預覽
                 lastGeneratedImage = null; // 上傳新圖片時，清除上次生成的圖片
+                downloadBtn.classList.add('hidden'); // 隱藏下載按鈕
                 const files = e.target.files;
                 
                 if (files.length > 5) {
@@ -126,12 +134,11 @@
                 loadingIndicator.classList.remove('hidden');
                 imageContainer.innerHTML = '';
                 initialMessage.classList.add('hidden');
+                downloadBtn.classList.add('hidden'); // 隱藏下載按鈕
 
-                // 請在這裡貼上您的 API 金鑰
                 const apiKey = "AIzaSyAVRkdCHjYQCG-0_D2v-yVLWBm7dm6cFY4"; 
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${apiKey}`;
                 
-                // 建立 API 請求的內容部分
                 const contentParts = [{ text: prompt }];
                 images.forEach(img => {
                     contentParts.push({
@@ -149,51 +156,83 @@
                     },
                 };
                 
-                try {
-                    const response = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
+                // 實作指數退避重試機制
+                const maxRetries = 5;
+                let delay = 1000; // 初始延遲為 1 秒
 
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.error?.message || '圖像生成失敗');
+                for (let i = 0; i < maxRetries; i++) {
+                    try {
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.ok) {
+                            const result = await response.json();
+                            const imageData = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+                            
+                            if (imageData) {
+                                const imageUrl = `data:image/png;base64,${imageData}`;
+                                const img = document.createElement('img');
+                                img.src = imageUrl;
+                                img.alt = prompt;
+                                img.className = 'w-full h-auto rounded-lg shadow-lg object-contain';
+                                
+                                imageContainer.innerHTML = '';
+                                imageContainer.appendChild(img);
+                                
+                                // 成功生成後，將新圖像儲存為下次的參考，並顯示下載按鈕
+                                lastGeneratedImage = {
+                                    base64: imageData,
+                                    mimeType: 'image/png'
+                                };
+                                downloadBtn.classList.remove('hidden');
+                            } else {
+                                displayMessage('未收到有效的圖像數據。', true);
+                            }
+                            return; // 成功後退出
+                        } else if (response.status >= 500 && response.status < 600) {
+                            // 服務器端錯誤，等待並重試
+                            console.warn(`Attempt ${i + 1} failed with status ${response.status}. Retrying in ${delay}ms...`);
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            delay *= 2; // 指數退避
+                        } else {
+                            // 其他錯誤（例如 4xx 客戶端錯誤），直接拋出
+                            const errorData = await response.json();
+                            throw new Error(errorData.error?.message || `圖像生成失敗，狀態碼: ${response.status}`);
+                        }
+                    } catch (error) {
+                        console.error(`API 請求出錯:`, error);
+                        if (i === maxRetries - 1) { // 最後一次嘗試
+                           displayMessage(`錯誤：${error.message}`, true);
+                        }
                     }
-
-                    const result = await response.json();
-                    
-                    const imageData = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
-                    
-                    if (imageData) {
-                        const imageUrl = `data:image/png;base64,${imageData}`;
-                        const img = document.createElement('img');
-                        img.src = imageUrl;
-                        img.alt = prompt;
-                        img.className = 'w-full h-auto rounded-lg shadow-lg object-contain';
-                        
-                        imageContainer.innerHTML = '';
-                        imageContainer.appendChild(img);
-                        
-                        // 成功生成後，將新圖像儲存為下次的參考
-                        lastGeneratedImage = {
-                            base64: imageData,
-                            mimeType: 'image/png' // Gemini 輸出的格式
-                        };
-                    } else {
-                        displayMessage('未收到有效的圖像數據。', true);
-                    }
-
-                } catch (error) {
-                    console.error('API 請求出錯:', error);
-                    displayMessage(`錯誤：${error.message}`, true);
-                } finally {
-                    // 隱藏載入中指示器
-                    loadingIndicator.classList.add('hidden');
                 }
+                
+                // 如果所有重試都失敗
+                if (loadingIndicator.classList.contains('hidden')) {
+                    displayMessage('所有重試嘗試均失敗。', true);
+                }
+
+                // 隱藏載入中指示器
+                loadingIndicator.classList.add('hidden');
             };
 
-            // 處理按鈕點擊事件
+            // 處理下載按鈕點擊事件
+            downloadBtn.addEventListener('click', () => {
+                const imgElement = imageContainer.querySelector('img');
+                if (imgElement) {
+                    const link = document.createElement('a');
+                    link.href = imgElement.src;
+                    link.download = 'generated_image.png';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                }
+            });
+
+            // 處理生成按鈕點擊事件
             generateBtn.addEventListener('click', () => {
                 const prompt = promptInput.value.trim();
                 let imagesToUse = [];
@@ -220,4 +259,5 @@
     </script>
 </body>
 </html>
+
 
